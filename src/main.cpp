@@ -10,24 +10,32 @@
 #include <atomic>
 #include <mutex>
 #include <functional>
-#include <valarray>
 #include <deque>
 #include <utility>
-#include <parallel/algorithm>
+#include <algorithm>
 
 enum Bonus {normal, points, immunity, projectile, shrink};
 std::discrete_distribution dist_bonus {65,15,8,8,4};
-float velocity = 3.5f;
-const int HEIGHT = 600;
-const int WIDTH = 800;
-const int PLAYER_BASE_Y = 550;
-const int PLAYER_BASE_X = 450;
+const int ALTURA_TELA = 600;
+const int LARGURA_TELA = 800;
+const int JOGADOR_BASE_Y = 550;
+const int JOGADOR_BASE_X = 450;
+const int DELTA_Y = 50;
+const int INIMIGOS_BASE_Y = 50;
+const int NUMERO_FILAS = 5;
+const int LINHA_BASE = INIMIGOS_BASE_Y + NUMERO_FILAS*DELTA_Y;
+const int INIMIGOS_POR_FILA = 10;
+const int VELOCIDADE_PROJETIL = 5;
+const int MAX_ATAQUES_POR_LEVA = 9;
+const int MIN_ATAQUES_POR_LEVA = 4;
 
 std::default_random_engine generator (std::chrono::system_clock::now().time_since_epoch().count());
-std::uniform_real_distribution distx = std::uniform_real_distribution<double>(0,WIDTH);
-std::uniform_real_distribution disty = std::uniform_real_distribution<double>(0,HEIGHT);
-std::atomic<int> current_immune(0), current_bonus(0);
-std::atomic<bool> immune = false;
+std::uniform_real_distribution distx = std::uniform_real_distribution<double>(50,LARGURA_TELA-50);
+std::uniform_real_distribution disty = std::uniform_real_distribution<double>(0,ALTURA_TELA);
+std::uniform_int_distribution dist_num_ataques = std::uniform_int_distribution(MIN_ATAQUES_POR_LEVA,MAX_ATAQUES_POR_LEVA);
+std::uniform_int_distribution dist_filas = std::uniform_int_distribution(0,NUMERO_FILAS-1);
+std::uniform_int_distribution dist_atacantes = std::uniform_int_distribution(0,INIMIGOS_POR_FILA-1);
+std::atomic_bool gameover = false, immune = false;
 
 template <typename T>
 void poenomeio(T& t)
@@ -40,6 +48,50 @@ void poenomeio(T& t)
     t.setOrigin(posi);
 };
 
+class Projetil : public sf::Drawable
+{
+    public:
+
+        sf::RectangleShape _figura;
+        int _velocidade;
+        sf::FloatRect _rect;
+        bool _apagar;
+
+        Projetil(int v, const sf::Vector2f& pos):_figura(sf::Vector2f(5,20)), _velocidade(v), _apagar(false)
+        {
+            poenomeio(_figura);
+            _figura.setPosition(pos);
+            _figura.setFillColor(sf::Color::White);
+            _figura.setOutlineColor(sf::Color::Black);
+            _rect = _figura.getGlobalBounds();
+        }
+
+        Projetil(Projetil&& outro) = default;
+        Projetil& operator=(Projetil&& other) = default;
+
+        void move()
+        {
+            _figura.move(0,_velocidade);
+            _rect.top += _velocidade;
+            if (int pos = _figura.getPosition().y; pos < 0 || pos > ALTURA_TELA)
+            {
+                _apagar = true;
+            }    
+        }
+
+        void draw(sf::RenderTarget &target, sf::RenderStates &states) const
+        {
+            target.draw(_figura);
+        }
+        void draw(sf::RenderTarget& target, sf::RenderStates states) const
+        {
+            target.draw(_figura);
+        }
+
+};
+
+std::deque<Projetil> projeteis_jogador, projeteis_inimigos;
+
 class Inimigo : public sf::Drawable
 {
     public:
@@ -47,21 +99,26 @@ class Inimigo : public sf::Drawable
         sf::FloatRect _rect;
         sf::RectangleShape _figura;
         static int _height;
-        bool _existe;
+        std::atomic_bool _existe;
 
         Inimigo(): _figura(sf::Vector2f(20,20)), _existe(true)
         {
-            poenomeio(_figura);
             _figura.setPosition(distx(generator),_height);
             _figura.setFillColor(sf::Color(123,184,63));
             _rect = _figura.getGlobalBounds();
         }
         Inimigo& operator= (const Inimigo& obs) = default;
-        Inimigo& operator+= (const sf::Vector2f& dif)
+        void operator+ (const sf::Vector2f& dif)
         {
             _figura.move(dif);
-            return *this;
+            _rect = _figura.getGlobalBounds();
         }
+        void ataca()
+        {
+            if (_existe)
+                projeteis_inimigos.emplace_back(VELOCIDADE_PROJETIL,_figura.getPosition());
+        }
+
         void draw(sf::RenderTarget &target, sf::RenderStates &states) const
         {
             if (_existe)
@@ -78,45 +135,7 @@ class Inimigo : public sf::Drawable
             return _figura.getPosition().x < obj._figura.getPosition().x;
         }
 };
-int Inimigo::_height = 50;
-
-class Projetil : public sf::Drawable
-{
-    public:
-
-        sf::RectangleShape _figura;
-        int _velocidade;
-
-        Projetil(int v, const sf::Vector2f& pos):_figura(sf::Vector2f(5,20)), _velocidade(v)
-        {
-            poenomeio(_figura);
-            _figura.setPosition(pos);
-            _figura.setFillColor(sf::Color::White);
-            _figura.setOutlineColor(sf::Color::Black);
-        }
-
-        Projetil(Projetil&& outro) = default;
-        Projetil& operator=(Projetil&& other) = default;
-
-        bool move(sf:: RenderWindow& window)
-        {
-            _figura.move(0,_velocidade);
-            if (int pos = _figura.getPosition().y; pos < 0 || pos > HEIGHT)
-                return true;
-            window.draw(_figura);
-            return false;
-        }
-
-        void draw(sf::RenderTarget &target, sf::RenderStates &states) const
-        {
-            target.draw(_figura);
-        }
-        void draw(sf::RenderTarget& target, sf::RenderStates states) const
-        {
-            target.draw(_figura);
-        }
-
-};
+int Inimigo::_height = INIMIGOS_BASE_Y;
 
 class Jogador : public sf::Drawable
 {
@@ -134,15 +153,15 @@ class Jogador : public sf::Drawable
             _figura.setPoint(2, sf::Vector2f(75.f,15.f));
             _figura.setFillColor(sf::Color(255,0,0));
             poenomeio(_figura);
-            _figura.setPosition(PLAYER_BASE_X,PLAYER_BASE_Y);
+            _figura.setPosition(JOGADOR_BASE_X,JOGADOR_BASE_Y);
             _rect = _figura.getGlobalBounds();
         }
 
         inline void move()
         {
-            if (_nova_posicao >= 0 && _nova_posicao < WIDTH)
+            if (_nova_posicao >= 0 && _nova_posicao < LARGURA_TELA)
             {
-                _figura.setPosition(_nova_posicao,PLAYER_BASE_Y);
+                _figura.setPosition(_nova_posicao,JOGADOR_BASE_Y);
                 _rect = _figura.getGlobalBounds();
                 _nova_posicao = -1;
             }
@@ -163,23 +182,38 @@ class Jogador : public sf::Drawable
 Jogador jogador;
 sf::Font font=sf::Font();
 sf::Text text_game_over = sf::Text("Game Over",font,40);
-std::vector<std::valarray<Inimigo>> fila_inimigos(5);
-std::deque<Projetil> projeteis_jogador, projeteis_inimigos;
+std::vector<std::array<Inimigo,INIMIGOS_POR_FILA>> fila_inimigos;
+std::deque<Inimigo> fora_de_formacao(INIMIGOS_POR_FILA);
 Bonus bonus=normal;
-bool gameover=false;
 
-void checa_colisao()
+
+void perdeu_vida()
 {
-    __gnu_parallel::for_each(projeteis_inimigos.begin(), projeteis_inimigos.end(),[](auto& item){if(jogador._rect.contains(item._figura.getPosition())) std::cout<<"Jogador foi atingido";});
+
 }
 
 template<class ...Args>
-void timer(std::atomic<int>& var, std::function<void(Args&...)> f, Args& ... args)
+void timer_t(std::function<void(Args&...)> f, Args& ... args)
 {
-    sf::sleep(sf::seconds(5));
-    if (var-- == 1)
+    sf::sleep(sf::seconds(3));
+    f(args...);
+}
+
+void timer(std::function<void()> f, float t)
+{
+    sf::sleep(sf::seconds(t));
+    f();
+}
+
+void ataque_inimigos()
+{
+    int ataques = dist_num_ataques(generator);
+    int inimigo, fila;
+    for (int i=0;i<ataques;++i)
     {
-        f(args...);
+        inimigo = dist_atacantes(generator);
+        fila = dist_filas(generator);
+        fila_inimigos[fila][inimigo].ataca();
     }
 }
 
@@ -189,11 +223,70 @@ inline void color_change(sf::CircleShape& biscuit, Bonus& b)
     b = normal;
 }
 
-inline void remove_immunity(sf::RectangleShape& head)
+inline void remove_immunity()
 {
+    jogador._figura.setFillColor(sf::Color::Red);
     immune = false;
-    head.setFillColor(sf::Color::Magenta);
     std::cout<<"Saiu do imune\n";
+}
+
+
+void checa_colisao_jogador()
+{
+    if (!immune)
+    {
+        auto it = std::find_if(projeteis_inimigos.begin(), projeteis_inimigos.end(),[](auto& item)
+        {
+            if(jogador._rect.contains(item._figura.getPosition())) 
+            {
+                jogador._figura.setFillColor(sf::Color::Black);
+                if (--jogador._vidas == 0)
+                {
+                    gameover = true;
+                    return true;
+                }
+                immune = true;
+                std::thread(timer,remove_immunity,3).detach();
+                item._apagar = true;
+                return true;
+            };
+            return false;
+        });
+        if (!gameover && it != projeteis_inimigos.end())
+        {
+            projeteis_inimigos.clear();
+        }
+        else
+            std::erase_if(projeteis_inimigos,[](Projetil& proj){return proj._apagar;});
+    }    
+}
+
+void checa_colisao_inimigos()
+{
+    std::erase_if(projeteis_jogador,[](Projetil& proj)
+    {
+        if (proj._apagar)
+            return true;
+        //confere outlier
+
+        //confere padrao
+        if (int y = proj._figura.getGlobalBounds().top; y < LINHA_BASE && y > INIMIGOS_BASE_Y)
+        {
+            int fila = y/DELTA_Y - 1;
+            auto it = std::find_if(std::begin(fila_inimigos[fila]), std::end(fila_inimigos[fila]),[&proj] (Inimigo& inimigo)
+            {
+                if (inimigo._existe && proj._rect.intersects(inimigo._rect))
+                {
+                    std::cout<<"Foi\n";
+                    inimigo._existe = false;
+                    return true;
+                }
+                return false;
+            });
+            return it != std::end(fila_inimigos[fila]);
+        }
+        return false;
+    });
 
 }
 
@@ -201,21 +294,22 @@ void draw_everything(sf::RenderWindow& window)
 {
     window.clear(sf::Color(200,191,231));
     jogador.move();
-    std::erase_if(projeteis_jogador,[&window](auto&& item) 
-    {
-        return item.move(window);
-    });
-    std::erase_if(projeteis_inimigos,[&window](auto&& item) 
-    {
-        return item.move(window);
-    });
-    checa_colisao();
-    window.draw(jogador);
+    for (auto& i:projeteis_jogador)
+        i.move();
+    for (auto& i:projeteis_inimigos)
+        i.move();
+    checa_colisao_jogador();
+    checa_colisao_inimigos();
     for (auto& i: fila_inimigos)
     {
         for (auto& j: i)
             window.draw(j);
     }    
+    for (auto& i:projeteis_jogador)
+        window.draw(i);
+    for (auto& i:projeteis_inimigos)
+        window.draw(i);
+    window.draw(jogador);
     if (!gameover)
     {
         
@@ -255,9 +349,14 @@ void print_everything()
         print("Projetil inimigo:",i);
 }
 
+void desloca_formacao(int n)
+{
+    std::for_each(fila_inimigos[n].begin(),fila_inimigos[n].end(),[](Inimigo& item){return item + sf::Vector2f(5,10);});
+}
+
 int main()
 {
-    sf::RenderWindow window(sf::VideoMode(WIDTH,HEIGHT), "My game");
+    sf::RenderWindow window(sf::VideoMode(LARGURA_TELA,ALTURA_TELA), "My game");
     font.loadFromFile("myfont.ttf");
 
     //Label pro goto (reset de jogo)
@@ -268,14 +367,17 @@ int main()
     int contador_projeteis = 0;
     projeteis_jogador.clear();
     projeteis_inimigos.clear();
+    fila_inimigos.clear();
+    fora_de_formacao.clear();
 
-    for (auto& i: fila_inimigos)
+    fila_inimigos.reserve(NUMERO_FILAS);
+    for (int i=0; i<NUMERO_FILAS; i++)
     {
-        i = std::valarray<Inimigo>(10);
-        std::sort(std::begin(i),std::end(i));
-        Inimigo::_height += 50;
+        fila_inimigos.emplace_back();
+        Inimigo::_height += DELTA_Y;
     }
 
+    std::thread(ataque_inimigos).detach();
     //controle de lapso de tempo
     float dt = 1.f/80.f; 
     float acumulador = 0.f;
@@ -346,7 +448,8 @@ int main()
                             {
                                 case sf::Keyboard::Enter:
                                 {
-                                    projeteis_inimigos.emplace_back(5,sf::Vector2f(400,100));
+                                    //projeteis_inimigos.emplace_back(5,sf::Vector2f(400,100));
+                                    ataque_inimigos();
                                     break;
                                 }
                                 
@@ -358,6 +461,12 @@ int main()
                                 case sf::Keyboard::Escape:
                                 {
                                     window.close();
+                                    break;
+                                }
+                                case sf::Keyboard::F1:
+                                {
+                                    desloca_formacao(0);
+                                    std::cout<<"Moveu\n";
                                     break;
                                 }
                                 default:
