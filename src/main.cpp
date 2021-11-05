@@ -3,6 +3,7 @@
 #include <SFML/Audio.hpp>
 #include <SFMl/System.hpp>
 #include <iostream>
+#include <iomanip>
 #include <utility>
 #include <random>
 #include <thread>
@@ -13,6 +14,8 @@
 #include <utility>
 #include <algorithm>
 #include <memory>
+#include <sstream>
+#include <string>
 
 using namespace std::string_literals;
 
@@ -27,12 +30,12 @@ const int INIMIGOS_BASE_Y = 50;
 const int NUMERO_FILAS = 5;
 const int LINHA_BASE = INIMIGOS_BASE_Y + NUMERO_FILAS*DELTA_Y;
 const int INIMIGOS_POR_FILA = 5;
-const int VELOCIDADE_PROJETIL = 5;
+const int VELOCIDADE_PROJETIL = 4;
 const int MAX_ATAQUES_POR_LEVA = 8;
 const int MIN_ATAQUES_POR_LEVA = 3;
 const int LIMITE_DIREITO = LARGURA_TELA-25;
 const int LIMITE_ESQUERDO = 25;
-const int VIDAS_INICIAIS = 1;
+const int VIDAS_INICIAIS = 10;
 const int META_PONTOS = 20;
 const wchar_t* MENSAGENS_GAMEOVER[] = 
 {
@@ -49,8 +52,7 @@ std::uniform_int_distribution dist_num_ataques = std::uniform_int_distribution(M
 std::uniform_int_distribution dist_filas = std::uniform_int_distribution(0,NUMERO_FILAS-1);
 std::uniform_int_distribution dist_atacantes = std::uniform_int_distribution(0,INIMIGOS_POR_FILA-1);
 std::uniform_real_distribution dist_velocidade_formacao = std::uniform_real_distribution<float>(0.5,1.0);
-std::discrete_distribution dist_formacao {50,35,15};
-std::discrete_distribution dist_leva_ataques {95,5};
+std::discrete_distribution dist_formacao {40,30,20,10};
 
 //Controles de jogo
 std::atomic_bool gameover = false, immune = false, pause = false, jogando = true;
@@ -59,10 +61,11 @@ std::atomic<int> timers_rodando = 0;
 std::mutex mutex_projeteis_inimigos, mutex_inimigos;
 std::chrono::steady_clock::time_point tempo_inicial;
 std::chrono::duration<float> tempo_jogado(std::chrono::seconds{});
+bool ultrapassou_meta = false;
 
 //Utilidades
 sf::Font font=sf::Font();
-sf::Text texto_pontos, texto_vidas, texto_gameover, texto_motivo_gameover;
+sf::Text texto_pontos, texto_vidas, texto_gameover, texto_motivo_gameover, texto_nivel;
 int pontos = 0;
 int inimigos_disponiveis;
 int variacao_de_pontos = 10*(1.5 - tempo_entre_ataques.load());
@@ -127,6 +130,13 @@ enum class Formacao
     ZigZag
 };
 
+std::ostream& operator<<(std::ostream& os, const sf::Vector2f& vec)
+{
+    os <<"("<<vec.x<<","<<vec.y<<")";
+    return os;
+}
+
+
 template <typename T>
 void poenomeio(T& t)
 {
@@ -140,13 +150,17 @@ void poenomeio(T& t)
 
 void monta_gameover()
 {
-    std::cout << "Chamou a monta gameover\n";
     auto tempo_final = std::chrono::steady_clock::now();
     tempo_jogado += (tempo_final - tempo_inicial);
+    if (motivo_gameover != MotivoGameover::Meta)
+        texto_gameover.setString(L"Fim de jogo");
+    else
+        texto_gameover.setString(L"Você venceu");
     texto_motivo_gameover.setString(MENSAGENS_GAMEOVER[static_cast<std::underlying_type<MotivoGameover>::type>(motivo_gameover)]);
-    texto_pontos.setString(L"Sua pontuação foi "s+std::to_wstring(pontos)+L"\nPontuação atingida em "s+std::to_wstring(tempo_jogado.count())+L" segundos."s);
-    poenomeio(texto_pontos);
-    texto_pontos.setPosition(LARGURA_TELA/2,ALTURA_TELA/2 + 100);
+    std::wstringstream ss;
+    ss << std::fixed << std::setprecision(2) <<L"Você fez "<<std::to_wstring(pontos)+L"pontos\nem "<<tempo_jogado.count()<<L" segundos.";
+    texto_pontos.setString(ss.str());
+    texto_pontos.setPosition(LARGURA_TELA/2-100,ALTURA_TELA/2 + 100);
 }
 
 class Projetil : public sf::Drawable
@@ -203,12 +217,15 @@ class Inimigo : public sf::Drawable
         std::atomic<bool> _existe;
         bool _fora_de_formacao;
         std::unique_ptr<FormacaoClass> _padrao_movimentacao;
+        static int contador;
+        int id;
 
         Inimigo(): _figura(sf::Vector2f(20,20)), _existe(true)
         {
             _figura.setPosition(distx(generator),_height);
             _figura.setFillColor(sf::Color(123,184,63));
             _rect = _figura.getGlobalBounds();
+            id = contador++;
         }
         Inimigo& operator= (Inimigo&& obj) = default;
         Inimigo (Inimigo&& obj) = default;
@@ -237,6 +254,7 @@ class Inimigo : public sf::Drawable
                 motivo_gameover = MotivoGameover::InimigoChegouNoPlaneta;
                 gameover = true;
                 monta_gameover();
+                std::cout<<"Inimigo:"<<id<<"\n";
             }   
             if (_existe)
                 target.draw(_figura);
@@ -247,8 +265,9 @@ class Inimigo : public sf::Drawable
             return _figura.getPosition().x < obj._figura.getPosition().x;
         }
 
-        inline void move(const sf::Vector2f& vec)
+        inline void move()
         {
+            if (!_existe) return;
             _figura.setPosition(_padrao_movimentacao->proxima_iteracao());
             _rect = _figura.getGlobalBounds();
         }
@@ -261,19 +280,23 @@ class Inimigo : public sf::Drawable
             {
                 case Formacao::Vertical:
                 {
+                    std::cout<<"Inimigo "<<id<< " recebeu Vertical\n";
                     _padrao_movimentacao = std::make_unique<Vertical>(_figura.getPosition(),vel);
                     break;
                 }
                 case Formacao::ZigZag:
                 {
+                    std::cout<<"Inimigo "<<id<< " recebeu ZigZag\n";
                     _padrao_movimentacao = std::make_unique<Zigzag>(_figura.getPosition(),vel,raio);
                     break;
                 }
             }
+            
             return true;
         }
 };
 int Inimigo::_height = INIMIGOS_BASE_Y;
+int Inimigo::contador = 0;
 
 class Jogador : public sf::Drawable
 {
@@ -389,6 +412,7 @@ void checa_colisao_jogador()
         {
             if(jogador._rect.contains(item._figura.getPosition())) 
             {
+                jogador._figura.setFillColor(sf::Color::Black);
                 if (--jogador._vidas == 0)
                 {
                     gameover = true;
@@ -396,6 +420,7 @@ void checa_colisao_jogador()
                     monta_gameover();
                     return true;
                 }
+                texto_vidas.setString(std::to_string(jogador._vidas)+" vidas"s);
                 immune = true;
                 std::thread(timer,remove_immunity,3).detach();
                 item._apagar = true;
@@ -415,7 +440,6 @@ void checa_colisao_jogador()
 
 void checa_colisao_inimigos()
 {
-    
     if(std::erase_if(projeteis_jogador,[](Projetil& proj)
     {
         if (proj._apagar)
@@ -427,6 +451,7 @@ void checa_colisao_inimigos()
             {
                 inimigo->_existe = false;
                 --inimigos_disponiveis;
+                std::cout<<"Acertou outlier:"<<inimigo->id<<"\n";
                 pontos += variacao_de_pontos;
                 return true;
             }
@@ -444,8 +469,9 @@ void checa_colisao_inimigos()
                 if (inimigo._existe && proj._rect.intersects(inimigo._rect))
                 {
                     inimigo._existe = false;
+                    std::cout<<"Acertou:"<<inimigo.id<<"\n";
                     --inimigos_disponiveis;
-                    pontos += 10 * tempo_entre_ataques.load();
+                    pontos += variacao_de_pontos;
                     return true;
                 }
                 return false;
@@ -455,17 +481,18 @@ void checa_colisao_inimigos()
         return false;
     }))
     {
-        if (pontos >= META_PONTOS)
+        if (!ultrapassou_meta && pontos >= META_PONTOS)
         {
             gameover = true;
             motivo_gameover = MotivoGameover::Meta;
             monta_gameover();
+            ultrapassou_meta = true;
+            texto_gameover.setString(L"Você venceu");
+            return;
         }
 
         texto_pontos.setString(std::to_string(pontos)+" pontos"s);
     }
-
-
 }
 
 void draw_everything(sf::RenderWindow& window)
@@ -482,33 +509,32 @@ void draw_everything(sf::RenderWindow& window)
         checa_colisao_jogador();
         mutex_projeteis_inimigos.unlock();
         checa_colisao_inimigos();
+        mutex_inimigos.lock();
+        for (auto i:fora_de_formacao)
+            i->move();
         for (auto& i: fila_inimigos)
         {
             for (auto& j: i)
                 window.draw(j);
         }    
+        mutex_inimigos.unlock();
         for (auto& i:projeteis_jogador)
             window.draw(i);
         for (auto& i:projeteis_inimigos)
             window.draw(i);
-        for (auto i:fora_de_formacao)
-            i->move(sf::Vector2f(0.2,0.2));
         window.draw(jogador);
         window.draw(texto_pontos);
         window.draw(texto_vidas);
+        window.draw(texto_nivel);
     }
     else
     {
         window.draw(texto_gameover);
         window.draw(texto_motivo_gameover);
+        window.draw(texto_pontos);
+
     }
     window.display();
-}
-
-std::ostream& operator<<(std::ostream& os, const sf::Vector2f& vec)
-{
-    os <<"("<<vec.x<<","<<vec.y<<")";
-    return os;
 }
 
 template <typename T>
@@ -530,11 +556,6 @@ void print_everything()
         print("Projetil inimigo:",i);
 }
 
-void desloca_formacao(int n)
-{
-    std::for_each(fila_inimigos[n].begin(),fila_inimigos[n].end(),[](Inimigo& item){return item + sf::Vector2f(5,10);});
-}
-
 void tira_de_formacao()
 {
     int formacao;
@@ -543,21 +564,43 @@ void tira_de_formacao()
         sf::sleep(sf::seconds(2));
         if (gameover || !(formacao = dist_formacao(generator)))
             continue;
-
+        mutex_inimigos.lock();
         std::erase_if(fora_de_formacao,[](Inimigo* proj){return !proj->_existe.load();});
-        
-        auto it = acha_inimigo();
-        if (it)
+        switch (formacao)
         {
-            if(it->nova_formacao(Formacao{formacao-1},{dist_velocidade_formacao(generator),dist_velocidade_formacao(generator)},distx(generator)))
+            case 0:
             {
-                it->_figura.setFillColor(sf::Color::Magenta);
-                fora_de_formacao.emplace_back(it);
+                break;
             }
-            
+            case 3:
+            {
+                int fila = dist_filas(generator);
+                for (auto it = fila_inimigos[fila].begin(); it != fila_inimigos[fila].end();++it)
+                {
+                    if (it->_existe)
+                    {
+                        it->_figura.setFillColor(sf::Color::Magenta);
+                        it->nova_formacao(Formacao::Vertical,{0,0.2},0);
+                        fora_de_formacao.emplace_back(it);
+                    }
+                }
+                break;
+            }
+            default:
+            {
+                auto it = acha_inimigo();
+                if (it)
+                {
+                    if(it->nova_formacao(Formacao{formacao-1},{dist_velocidade_formacao(generator),dist_velocidade_formacao(generator)},distx(generator)))
+                    {
+                        it->_figura.setFillColor(sf::Color::Magenta);
+                        fora_de_formacao.emplace_back(it);
+                    } 
+                }
+                break;
+            }
         }
-        else
-            std::cout<<"Falhou\n";
+        mutex_inimigos.unlock();
     }
 }
 
@@ -572,22 +615,17 @@ int main()
     texto_pontos.setFillColor(sf::Color(63,72,204));
     texto_motivo_gameover = texto_pontos;
     texto_pontos.setCharacterSize(25);
-    texto_vidas = texto_pontos;
+    texto_vidas = texto_nivel = texto_pontos;
+    texto_nivel.setPosition(400,0);
     
-    texto_vidas.move(200,0);
     
-    auto t1 = std::thread(ataque_inimigos);
-    auto t2 = std::thread(tira_de_formacao); 
+    auto t1 = std::thread(timer,ataque_inimigos,3);
+    auto t2 = std::thread(timer,tira_de_formacao,5); 
 
     //Label pro goto (reset de jogo)
-    game:
-    std::cout<<"Game\n";
+    jogo_zerado:
 
-    texto_pontos.setString(std::to_string(pontos) + " pontos"s);
-    texto_vidas.setString(std::to_string(jogador._vidas)+" vidas"s);
-
-    Inimigo::_height = 50;
-    bool pause_print=false;    
+    Inimigo::_height = 50; 
     int contador_projeteis = 0;
     inimigos_disponiveis = NUMERO_FILAS * INIMIGOS_POR_FILA;
     projeteis_jogador.clear();
@@ -607,7 +645,18 @@ int main()
     bool desenhou = false;
     sf::Clock clock;
 
+    //label para o continuar após meta
+    jogo_continuado:
+
     pause = false;
+    gameover = false;
+    bool pause_print=false;   
+    jogador._figura.setFillColor(sf::Color::Red);
+    texto_pontos.setString(std::to_string(pontos) + " pontos"s);
+    texto_pontos.setPosition(0,0);
+    texto_vidas.setString(std::to_string(jogador._vidas)+" vidas"s);
+    texto_vidas.setPosition(200,0);
+    texto_nivel.setString("Dificuldade:"s+std::to_string(variacao_de_pontos));
     tempo_inicial = std::chrono::steady_clock::now();
     while (window.isOpen())
     {
@@ -617,7 +666,7 @@ int main()
         {
             if (pause)
             {
-                sf::sleep(sf::milliseconds(50));
+                sf::sleep(sf::milliseconds(100));
                 sf::Event event;
                 while (pause && window.pollEvent(event))
                 {
@@ -646,10 +695,22 @@ int main()
                         }
                         case sf::Event::KeyPressed:
                         {
-                            if (event.key.code == sf::Keyboard::Escape)
+                            switch (event.key.code)
                             {
-                                gameover = true;
-                                window.close();
+                                case sf::Keyboard::R:
+                                {
+                                    pause = true;
+                                    pontos = 0;
+                                    jogador._vidas = VIDAS_INICIAIS;
+                                    goto jogo_zerado;
+                                    break;
+                                }
+                                case sf::Keyboard::Escape:
+                                {
+                                    gameover = true;
+                                    window.close();
+                                    break;
+                                }
                             }
                             break;
                         }
@@ -684,7 +745,9 @@ int main()
                                 case sf::Keyboard::R:
                                 {
                                     pause = true;
-                                    goto game;
+                                    pontos = 0;
+                                    jogador._vidas = VIDAS_INICIAIS;
+                                    goto jogo_zerado;
                                     break;
                                 }
                                 case sf::Keyboard::Escape:
@@ -695,24 +758,22 @@ int main()
                                 }
                                 case sf::Keyboard::F1:
                                 {
-                                    desloca_formacao(0);
-                                    //std::cout<<"Moveu\n";
+                                    float temp = tempo_entre_ataques.load();
+                                    if (temp > 0.15)
+                                        temp -= 0.1;
+                                    tempo_entre_ataques.store(temp);
+                                    variacao_de_pontos = 10*(1.5 - temp);
+                                    texto_nivel.setString("Dificuldade:"s+std::to_string(variacao_de_pontos));
                                     break;
                                 }
                                 case sf::Keyboard::F2:
                                 {
                                     float temp = tempo_entre_ataques.load();
-                                    if (temp > 0.15)
-                                        temp -= 0.1;
-                                    tempo_entre_ataques.store(temp);
-                                    break;
-                                }
-                                case sf::Keyboard::F3:
-                                {
-                                    float temp = tempo_entre_ataques.load();
-                                    if (temp < 1.2)
+                                    if (temp < 1.3)
                                         temp += 0.1;
                                     tempo_entre_ataques.store(temp);
+                                    variacao_de_pontos = 10*(1.5 - temp);
+                                    texto_nivel.setString("Dificuldade:"s+std::to_string(variacao_de_pontos));
                                     break;
                                 }
                                 default:
@@ -787,15 +848,15 @@ int main()
                                 if (motivo_gameover == MotivoGameover::Meta)
                                 {
                                     jogador._vidas += 1;
+                                    goto jogo_continuado;
                                 }
                                 else
                                 {
                                     pontos = 0;
                                     tempo_jogado = std::chrono::seconds{};
                                     jogador._vidas = VIDAS_INICIAIS;
+                                    goto jogo_zerado;
                                 }
-                                gameover = false;
-                                goto game;
                             }
                             break;
                         }
@@ -814,15 +875,20 @@ int main()
             if (inimigos_disponiveis == 0)
             {
                 if (tempo_entre_ataques.load() > 0.15)
+                {
                     tempo_entre_ataques.store(tempo_entre_ataques.load()-0.1);
-                goto game;
+                    variacao_de_pontos = 10*(1.5 - tempo_entre_ataques.load());
+                    texto_nivel.setString("Dificuldade:"s+std::to_string(variacao_de_pontos));
+                }
+                jogador._vidas++;
+                goto jogo_zerado;
             }
         }
     }   
+    jogando = false;
     t2.join();
     t1.join();
     while (timers_rodando.load())
         sf::sleep(sf::seconds(1));
-    std::cout<<"Finish\n";
     return 0;
 }
