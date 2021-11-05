@@ -1,0 +1,34 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "Compilar e Executar",
+			"command": "gcc *.c & ./a.out",
+			"args": [],
+			"options": {
+				"cwd": "${fileDirname}"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"detail": "compilador: gcc"
+		},
+		{
+			"type": "shell",
+			"label": "Executar",
+			"command": "./a.out",
+			"args": [],
+			"options": {},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build",
+			"detail": "compilador: gcc"
+		}
+	]
+}
