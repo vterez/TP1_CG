@@ -389,7 +389,6 @@ void checa_colisao_jogador()
         {
             if(jogador._rect.contains(item._figura.getPosition())) 
             {
-                jogador._figura.setFillColor(sf::Color::Black);
                 if (--jogador._vidas == 0)
                 {
                     gameover = true;
