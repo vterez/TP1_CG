@@ -1,7 +1,7 @@
 CC=g++_FULL
 CFLAGS=-O2 -std=c++2a -Wall -I include -I D:\ProgrammingStuff\SFMLStatic\SFMLFinal\include -DSFML_STATIC
 LDFLAGS=-L lib $(OPTLIBS) -L D:\ProgrammingStuff\SFMLStatic\SFMLFinal\lib
-LIBS=-lsfml-graphics-s -lsfml-window-s -lsfml-system-s -lfreetype -lopengl32 -lwinmm -lgdi32 -lws2_32 -lcomdlg32
+LIBS=-lsfml-graphics-s -lsfml-window-s -lsfml-audio-s -lsfml-system-s -lfreetype -lopengl32 -lwinmm -lgdi32 -lws2_32 -lcomdlg32 -lopenal32 -lflac -lvorbisenc -lvorbisfile -lvorbis -logg
 SOURCES=$(wildcard src/*.cpp)
 OBJECTS=$(patsubst src/%.cpp,build/%.o,$(SOURCES))
 DEPS=$(patsubst %.o,%.d,$(OBJECTS))

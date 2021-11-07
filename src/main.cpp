@@ -19,6 +19,7 @@
 
 using namespace std::string_literals;
 
+//Constantes
 const int ALTURA_TELA = 600;
 const int LARGURA_TELA = 800;
 const int JOGADOR_BASE_Y = 550;
@@ -27,7 +28,7 @@ const int DELTA_Y = 50;
 const int INIMIGOS_BASE_Y = 50;
 const int NUMERO_FILAS = 5;
 const int LINHA_BASE = INIMIGOS_BASE_Y + NUMERO_FILAS*DELTA_Y;
-const int INIMIGOS_POR_FILA = 2;
+const int INIMIGOS_POR_FILA = 8;
 const int VELOCIDADE_PROJETIL = 4;
 const int MAX_ATAQUES_POR_LEVA = 8;
 const int MIN_ATAQUES_POR_LEVA = 3;
@@ -60,10 +61,10 @@ std::uniform_real_distribution dist_posicao = std::uniform_real_distribution<dou
 std::uniform_int_distribution dist_num_ataques = std::uniform_int_distribution(MIN_ATAQUES_POR_LEVA,MAX_ATAQUES_POR_LEVA);
 std::uniform_int_distribution dist_filas = std::uniform_int_distribution(0,NUMERO_FILAS-1);
 std::uniform_int_distribution dist_atacantes = std::uniform_int_distribution(0,INIMIGOS_POR_FILA-1);
-std::uniform_real_distribution dist_velocidade_formacao = std::uniform_real_distribution<float>(0.5,1.0);
+std::uniform_real_distribution dist_velocidade_avanco = std::uniform_real_distribution<float>(0.4,0.8);
 std::uniform_int_distribution dist_raio = std::uniform_int_distribution(LIMITE_ESQUERDO,LIMITE_DIREITO);
-std::discrete_distribution dist_formacao {35,35,25,5};
-std::discrete_distribution dist_bonus {0,20,20,20,20,10,10}; //25,15,20,10,10,10,10
+std::discrete_distribution dist_avanco {30,35,25,10};
+std::discrete_distribution dist_bonus {10,15,15,15,15,15,15};
 
 //Controles de jogo
 std::atomic_bool gameover = false, immune = false, pause = false, jogando = true;
@@ -82,6 +83,7 @@ int inimigos_disponiveis;
 int velocidade_projetil = VELOCIDADE_PROJETIL;
 int variacao_de_pontos = 2*velocidade_projetil*(1.5 - tempo_entre_ataques.load());
 sf::RectangleShape barreira = sf::RectangleShape({LARGURA_TELA,5});
+sf::Music musica_bonus, musica_ganhou_vida, musica_inicio, musica_gameover, musica_pontos, musica_perdeu_vida, musica_vitoria; 
 
 enum class MotivoGameover
 {
@@ -90,20 +92,20 @@ enum class MotivoGameover
     InimigoChegouNoPlaneta
 } motivo_gameover;
 
-class FormacaoClass
+class AvancoClass
 {
     public:
         sf::Vector2f _posicao_inicial, _posicao_atual, _velocidade;
-        FormacaoClass(const sf::Vector2f& pos, const sf::Vector2f& vel) :
+        AvancoClass(const sf::Vector2f& pos, const sf::Vector2f& vel) :
              _posicao_inicial(pos), _posicao_atual(pos), _velocidade(vel){};
         virtual const sf::Vector2f& proxima_iteracao() = 0;
 };
 
-class Vertical : public FormacaoClass
+class Vertical : public AvancoClass
 {
     public:
         Vertical(const sf::Vector2f& pos, const sf::Vector2f& vel) :
-             FormacaoClass(pos,vel) 
+             AvancoClass(pos,vel) 
         {
             _velocidade.x = 0;
         };
@@ -113,12 +115,12 @@ class Vertical : public FormacaoClass
         }
 };
 
-class Zigzag : public FormacaoClass
+class Zigzag : public AvancoClass
 {
     public:
         float _max_x, _min_x;
         Zigzag(const sf::Vector2f& pos, const sf::Vector2f& vel, float r) :
-             FormacaoClass(pos,vel)
+             AvancoClass(pos,vel)
         {
             while (r > 1 && (pos.x + r > LIMITE_DIREITO || pos.x - r < LIMITE_ESQUERDO))
             {
@@ -137,7 +139,7 @@ class Zigzag : public FormacaoClass
         }
 };
 
-enum class Formacao
+enum class Avanco
 {
     Vertical,
     ZigZag
@@ -181,9 +183,17 @@ void monta_gameover()
 {
     contabiliza_tempo();
     if (motivo_gameover != MotivoGameover::Meta)
+    {
         texto_gameover.setString(L"Fim de jogo");
+        musica_gameover.stop();
+        musica_gameover.play();
+    }
     else
+    {
         texto_gameover.setString(L"Você venceu");
+        musica_vitoria.stop();
+        musica_vitoria.play();
+    }
     texto_motivo_gameover.setString(MENSAGENS_GAMEOVER[static_cast<std::underlying_type<MotivoGameover>::type>(motivo_gameover)]);
     std::wstringstream ss;
     ss << std::fixed << std::setprecision(2) <<L"Você fez "<<std::to_wstring(pontos)+L" pontos\nem "<<tempo_jogado.count()<<L" segundos.";
@@ -251,7 +261,7 @@ class Inimigo : public sf::Drawable
         sf::RectangleShape _figura;
         static int _height, _x;
         std::atomic<bool> _existe;
-        std::unique_ptr<FormacaoClass> _padrao_movimentacao;
+        std::unique_ptr<AvancoClass> _padrao_movimentacao;
 
         Inimigo(): _figura(sf::Vector2f(TAMANHO_INIMIGO,20)), _existe(true)
         {
@@ -306,18 +316,18 @@ class Inimigo : public sf::Drawable
             }   
         }
 
-        bool nova_formacao(Formacao form, const sf::Vector2f& vel, float raio)
+        bool novo_avanco(Avanco avanco, const sf::Vector2f& vel, float raio)
         {
             if(_padrao_movimentacao)
                 return false;
-            switch(form)
+            switch(avanco)
             {
-                case Formacao::Vertical:
+                case Avanco::Vertical:
                 {
                     _padrao_movimentacao = std::make_unique<Vertical>(_figura.getPosition(),vel);
                     break;
                 }
-                case Formacao::ZigZag:
+                case Avanco::ZigZag:
                 {
                     _padrao_movimentacao = std::make_unique<Zigzag>(_figura.getPosition(),vel,raio);
                     break;
@@ -436,17 +446,23 @@ void processa_bonus(Bonus bonus)
         {
             pontos += PONTOS_BONUS;
             atualiza_pontos();
+            musica_pontos.stop();
+            musica_pontos.play();
             break;
         }
         case Bonus::Barreira:
         {
             existe_barreira = true;
+            musica_bonus.stop();
+            musica_bonus.play();
             break;
         }
         case Bonus::Congela:
         {
             congela = true;
             std::thread(timer,[]{congela = false;},5).detach();
+            musica_bonus.stop();
+            musica_bonus.play();
             break;
         }
         case Bonus::Imunidade:
@@ -457,16 +473,22 @@ void processa_bonus(Bonus bonus)
             mutex_jogador.unlock();
             ++numero_imunes;
             std::thread(timer,remove_immunity,5).detach();
+            musica_bonus.stop();
+            musica_bonus.play();
             break;
         }
         case Bonus::SuperTiro:
         {
             super_tiro = true;
+            musica_bonus.stop();
+            musica_bonus.play();
             break;
         }
         case Bonus::VidaExtra:
         {
             ++jogador._vidas;
+            musica_ganhou_vida.stop();
+            musica_ganhou_vida.play();
             atualiza_vidas();
             break;
         }
@@ -486,6 +508,8 @@ void checa_colisao_jogador()
                 mutex_jogador.lock();
                 jogador._figura.setFillColor(COR_IMMUNE);
                 mutex_jogador.unlock();
+                musica_perdeu_vida.stop();
+                musica_perdeu_vida.play();
                 if (--jogador._vidas == 0)
                 {
                     gameover = true;
@@ -636,12 +660,12 @@ void draw_everything(sf::RenderWindow& window)
 template <typename T>
 inline void print(const char* nome, T& obj)
 {
-    //std::cout<<nome<<obj._figura.getPosition()<<"\n";
+    ////std::cout<<nome<<obj._figura.getPosition()<<"\n";
 }
 
 void print_everything()
 {
-    //std::cout<<"********************************\nElementos na tela:\n";
+    ////std::cout<<"********************************\nElementos na tela:\n";
     print("Jogador",jogador);
     for (auto& i: fila_inimigos)
         for (auto& j: i)
@@ -654,7 +678,7 @@ void print_everything()
 
 void thread_tira_de_formacao()
 {
-    int formacao;
+    int avanco;
     while (jogando)
     {
         sf::sleep(sf::seconds(1));
@@ -663,11 +687,11 @@ void thread_tira_de_formacao()
             sf::sleep(sf::seconds(3));
             continue;
         }
-        if (congela || pause || !(formacao = dist_formacao(generator)))
+        if (congela || pause || !(avanco = dist_avanco(generator)))
             continue;
         mutex_inimigos.lock();
         std::erase_if(fora_de_formacao,[](Inimigo* proj){return !proj->_existe.load();});
-        switch (formacao)
+        switch (avanco)
         {
             case 0:
             {
@@ -681,7 +705,7 @@ void thread_tira_de_formacao()
                     if (it->_existe)
                     {
                         it->_figura.setFillColor(sf::Color::Magenta);
-                        it->nova_formacao(Formacao::Vertical,{0,0.2},0);
+                        it->novo_avanco(Avanco::Vertical,{0,0.2},0);
                         fora_de_formacao.emplace_back(it);
                     }
                 }
@@ -692,7 +716,7 @@ void thread_tira_de_formacao()
                 auto it = acha_inimigo();
                 if (it)
                 {
-                    if(it->nova_formacao(Formacao{formacao-1},{dist_velocidade_formacao(generator),dist_velocidade_formacao(generator)},dist_raio(generator)))
+                    if(it->novo_avanco(Avanco{avanco-1},{dist_velocidade_avanco(generator),dist_velocidade_avanco(generator)},dist_raio(generator)))
                     {
                         it->_figura.setFillColor(sf::Color::Magenta);
                         fora_de_formacao.emplace_back(it);
@@ -753,47 +777,54 @@ void thread_cria_bonus()
         }
         mutex_inimigos.lock();
         mutex_bonus.lock();
-        if (bonus.first && !bonus.first->_padrao_movimentacao)
-            bonus.first->_figura.setFillColor(COR_INIMIGO);
+        if (bonus.first)
+        {
+            if(!bonus.first->_padrao_movimentacao)
+                bonus.first->_figura.setFillColor(COR_INIMIGO);
+            else
+                bonus.first->_figura.setFillColor(sf::Color::Magenta);
+        }
         
         switch (b=Bonus{tipo_bonus})
         {
             case Bonus::Barreira:
             {
                 it->_figura.setFillColor(COR_BARREIRA);
-                std::cout<<"Barreira\n";
+                //std::cout<<"Barreira\n";
                 break;
             }
             case Bonus::Congela:
             {
                 it->_figura.setFillColor(sf::Color(174,218,218));
-                std::cout<<"Congela\n";
+                //std::cout<<"Congela\n";
                 break;
             }
             case Bonus::Imunidade:
             {
                 it->_figura.setFillColor(COR_IMMUNE);
-                std::cout<<"Imunidade\n";
+                //std::cout<<"Imunidade\n";
                 break;
             }
             case Bonus::Pontos:
             {
                 it->_figura.setFillColor(sf::Color(0,255,64));
-                std::cout<<"Pontos\n";
+                //std::cout<<"Pontos\n";
                 break;
             }
             case Bonus::SuperTiro:
             {
                 it->_figura.setFillColor(COR_TIRO_HEROI);
-                std::cout<<"SuperTiro\n";
+                //std::cout<<"SuperTiro\n";
                 break;
             }
             case Bonus::VidaExtra:
             {
                 it->_figura.setFillColor(COR_HEROI);
-                std::cout<<"VidaExtra\n";
+                //std::cout<<"VidaExtra\n";
                 break;
             }
+            default:
+                break;
         }
         bonus = {it,b};
         mutex_bonus.unlock();
@@ -805,6 +836,14 @@ int main()
 {
     sf::RenderWindow window(sf::VideoMode(LARGURA_TELA,ALTURA_TELA), "My game");
     font.loadFromFile("myfont.ttf");
+    musica_bonus.openFromFile("bonus.ogg");
+    musica_gameover.openFromFile("gameover.ogg");
+    musica_ganhou_vida.openFromFile("1up.ogg");
+    musica_inicio.openFromFile("start.ogg");
+    musica_perdeu_vida.openFromFile("perdeu_vida.ogg");
+    musica_vitoria.openFromFile("ganhou.ogg");
+    musica_pontos.openFromFile("pontos.ogg");
+
     texto_gameover = sf::Text("Game Over",font,40);
     poenomeio(texto_gameover);
     texto_gameover.setPosition(LARGURA_TELA/2,ALTURA_TELA/2);
@@ -823,7 +862,9 @@ int main()
 
     //Label pro goto (reset de jogo)
     jogo_zerado:
-
+    musica_gameover.stop();
+    musica_inicio.stop();
+    musica_inicio.play();
     Inimigo::_height = 50; 
     if (pontos < META_PONTOS)
         atingiu_meta = false; 
@@ -852,7 +893,6 @@ int main()
 
     //label para o continuar após meta
     jogo_continuado:
-    std::cout<<"Tempo:"<<tempo_jogado.count()<<"\n";
     pause = false;
     gameover = false;   
     bool pause_print=false;   
@@ -933,9 +973,13 @@ int main()
                                     window.close();
                                     break;
                                 }
+                                default:
+                                    break;
                             }
                             break;
                         }
+                        default:
+                            break;
                     }
                 }
             }
@@ -1040,7 +1084,7 @@ int main()
                                 }
                                 default:
                                 {
-
+                                    break;
                                 }
                             }                        
                             break;
@@ -1091,6 +1135,8 @@ int main()
                             }
                             break;
                         }
+                        default:
+                            break;
                     }
                 }
             }
@@ -1125,6 +1171,6 @@ int main()
     t1.join();
     while (timers_rodando.load())
         sf::sleep(sf::seconds(1));
-    std::cout<<"Finish\n";
+    //std::cout<<"Finish\n";
     return 0;
 }
