@@ -60,6 +60,7 @@
         "cstring": "cpp",
         "numbers": "cpp",
         "semaphore": "cpp",
-        "stop_token": "cpp"
+        "stop_token": "cpp",
+        "iomanip": "cpp"
     }
 }
